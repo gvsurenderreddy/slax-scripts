@@ -1,0 +1,101 @@
+/*
+ *  .slax
+ *
+ *  Version History
+ *  ===============
+ *  v0.1	 Initial release.
+ *
+ */
+
+version 1.0;
+ 
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+ 
+import "../import/junos.xsl";
+
+var $arguments = {
+    <argument> {
+        <name> "neighbor";
+        <description> "IP address of BGP neighbor";
+    }
+    <argument> {
+        <name> "maxprefix";
+        <description> "Max prefix limit";
+    }
+}
+param $neighbor;
+param $maxprefix;
+
+match / {
+    <op-script-results> {
+
+	if ($neighbor && $maxprefix) {
+		var $res = jcs:invoke('get-bgp-group-information');
+		
+		var $peer = $res/bgp-group/peer-address[. = $neighbor or starts-with(., concat($neighbor, "+"))];
+		var $group = $peer/..;
+		if($group/name) {
+			<output> jcs:printf("Will change BGP prefix-limit for neighbor  %s (Group: %s) to %d", $neighbor, $group/name, $maxprefix);
+	
+			var $config = <configuration> {
+						<protocols> {
+							<bgp> {
+								<group> {
+									<name> $group/name;
+									<neighbor> {
+										<name> $neighbor;
+										<family> {
+											<inet> {
+												<unicast> {
+													<prefix-limit> {
+														<maximum> $maxprefix;	
+													}
+												}
+											}	
+										}
+									}
+								}
+							}
+						}
+					}
+
+			var $load_action = "merge";
+
+			var $options := {
+       			<commit-options> {
+           			<log> "Set BGP prefix-limit for " _ $neighbor _ " to " _ $maxprefix;
+        		}
+    		}
+
+    		var $connection = jcs:open();
+		 	if (not($connection)) {
+				call emit-error($message = "Not able to connect to local mgd");
+    		}
+
+    		var $results := { call jcs:load-configuration($connection, $action = $load_action, $commit-options = $options, $configuration = $config); }
+
+    		var $close-results = jcs:close($connection);
+
+			if ($results//xnm:error) {
+    			for-each ($results//xnm:error) {
+        			<output> message;
+    			}
+			}
+
+			if ($results//xnm:warning) {
+    			for-each ($results//xnm:warning) {
+        			<output> message;
+    			}
+			}
+
+		} else {
+			<output> jcs:printf("IP %s not found!", $neighbor);
+		}
+	} else {
+		<output> jcs:printf("Usage: op chg-bgp-pfxlim neighbor A.B.C.D maxprefix N");
+	}
+    }
+}
+
